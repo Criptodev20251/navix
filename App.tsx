@@ -48,7 +48,6 @@ const Documents = () => {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error("Usuário não logado");
 
-        // Helper to clean filenames (remove accents, special chars)
         const sanitizeName = (name: string) => {
           return name
             .normalize("NFD")
@@ -60,31 +59,33 @@ const Documents = () => {
         const cleanName = sanitizeName(file.name);
         const fileName = `${user.id}/${Date.now()}_${cleanName}`;
 
-        // 1. Storage Upload (Bucket: navix)
+        // 1. Storage Upload
         const { error: uploadError } = await supabase.storage
             .from('navix')
             .upload(fileName, file);
         
         if (uploadError) {
+          if (uploadError.message.includes('row-level security') || (uploadError as any).code === '42501') {
+            throw new Error("Erro de RLS (Storage): Permissão negada no bucket 'navix'.");
+          }
           throw uploadError;
         }
 
         // 2. DB Insert
         const newDoc = {
             user_id: user.id,
-            name: file.name.split('.')[0], // Friendly name (can keep original chars)
+            name: file.name.split('.')[0],
             type: fileExt || 'FILE',
             date: new Date().toISOString(),
             status: 'Pendente',
-            url: fileName // Store path
+            url: fileName
         };
 
         const { error: dbError } = await supabase.from('documents').insert([newDoc]);
         
         if (dbError) {
-            // Check for Row-Level Security policy violation
             if (dbError.code === '42501' || dbError.message.includes('row-level security')) {
-                 throw new Error("Permissão negada. Verifique as Políticas de Segurança (RLS) da tabela 'documents' no Supabase.");
+                 throw new Error("Erro de RLS (Tabela Documents): Rode o script SQL no Supabase para liberar o acesso.");
             }
             throw dbError;
         }
@@ -104,7 +105,6 @@ const Documents = () => {
   const handleDownload = async (path: string | undefined, name: string) => {
     if (!path) return;
     try {
-        // If it's a mock url (doesn't have user_id prefix usually), just alert or ignore in demo
         if (!path.includes('/')) {
             alert('Visualização indisponível para arquivos de exemplo.');
             return;
@@ -112,11 +112,9 @@ const Documents = () => {
 
         const { data, error } = await supabase.storage
             .from('navix')
-            .createSignedUrl(path, 60); // Valid for 60 seconds
+            .createSignedUrl(path, 60);
 
-        if (error) {
-             throw error;
-        }
+        if (error) throw error;
 
         if (data?.signedUrl) {
             window.open(data.signedUrl, '_blank');
@@ -142,7 +140,6 @@ const Documents = () => {
         </button>
       </div>
       
-      {/* Search & Filter */}
       <div className="flex gap-3 mb-6">
         <div className="bg-gray-100 flex-1 flex items-center px-4 rounded-full">
           <Icons.Search size={20} className="text-gray-500" />
@@ -210,7 +207,7 @@ const Payments = () => {
     };
 
     const handleTransaction = async (type: 'deposit' | 'pay') => {
-        const amount = 1000; // Simulated amount
+        const amount = 1000;
         try {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) return;
@@ -222,7 +219,8 @@ const Payments = () => {
             }
 
             // Update Profile
-            await supabase.from('profiles').update({ balance: newBalance }).eq('id', user.id);
+            const { error: profileError } = await supabase.from('profiles').update({ balance: newBalance }).eq('id', user.id);
+            if (profileError) throw profileError;
             
             // Insert Transaction
             const { error: txError } = await supabase.from('transactions').insert([{
@@ -239,8 +237,8 @@ const Payments = () => {
             alert(type === 'deposit' ? 'R$ 1.000,00 adicionado!' : 'Pagamento realizado!');
         } catch(e: any) { 
             console.error(e); 
-            if (e.message?.includes('row-level security')) {
-                alert('Erro de permissão (RLS). Verifique se as políticas da tabela "transactions" permitem insert.');
+            if (e.code === '42501' || e.message?.includes('row-level security')) {
+                alert('Erro de RLS: Você precisa rodar o script SQL de permissões no Supabase para atualizar saldos ou inserir transações.');
             } else {
                 alert('Erro na transação: ' + e.message); 
             }
@@ -252,7 +250,6 @@ const Payments = () => {
         <button onClick={() => navigate(-1)} className="mb-4 text-black"><Icons.ArrowLeft /></button>
       <h1 className="text-3xl font-bold text-slate-900 mb-6 tracking-tight">Carteira</h1>
       
-      {/* Wallet Card */}
       <div className="bg-black rounded-3xl p-7 text-white shadow-2xl mb-8 relative overflow-hidden">
         <div className="flex justify-between items-start mb-8 relative z-10">
           <div className="bg-white/20 p-2.5 rounded-xl backdrop-blur-sm border border-white/10">
@@ -267,10 +264,10 @@ const Payments = () => {
         </h2>
 
         <div className="flex gap-3 relative z-10">
-           <button onClick={() => handleTransaction('deposit')} className="flex-1 bg-white text-black py-3 rounded-full text-sm font-bold transition-colors active:scale-95">
+           <button onClick={() => handleTransaction('deposit')} className="flex-1 bg-white text-black py-3 rounded-full text-sm font-bold transition-all active:scale-95">
              Adicionar (+1k)
            </button>
-           <button onClick={() => handleTransaction('pay')} className="flex-1 bg-white/10 text-white py-3 rounded-full text-sm font-bold transition-colors active:scale-95">
+           <button onClick={() => handleTransaction('pay')} className="flex-1 bg-white/10 text-white py-3 rounded-full text-sm font-bold transition-all active:scale-95">
              Pagar (-1k)
            </button>
         </div>
@@ -324,7 +321,6 @@ const Profile = () => {
        </div>
 
        <div className="space-y-1">
-         {/* Seção Desenvolvedores */}
          <div className="pt-6 pb-2 border-t border-gray-100">
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3 pl-1">Desenvolvido por</h3>
             <div className="flex gap-3">
